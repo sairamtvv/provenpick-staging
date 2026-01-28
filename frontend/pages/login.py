@@ -12,6 +12,10 @@ class LoginState(AppState):
     token_input: str = ""
     error_message: str = ""
 
+    def set_token_input(self, value: str):
+        """Set token input value"""
+        self.token_input = value
+
     async def login(self):
         """Attempt login with token"""
         if not self.token_input:

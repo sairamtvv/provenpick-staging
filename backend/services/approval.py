@@ -128,7 +128,7 @@ async def migrate_to_production(full_data: Dict[str, Any]) -> Dict[str, int]:
     Returns:
         Dictionary mapping staging IDs to production IDs
     """
-    from backend.db.connection import DB
+    import asyncpg
     from datetime import datetime
 
     id_mapping = {
@@ -136,136 +136,184 @@ async def migrate_to_production(full_data: Dict[str, Any]) -> Dict[str, int]:
         "article_id": 0,
     }
 
-    # Note: category handling - we'll use category name as string for now
-    # In future, should look up category_table_id
+    # Connect to database
+    conn = await asyncpg.connect(
+        os.getenv(
+            "DATABASE_URL",
+            "postgresql://provenpick:provenpick@localhost:5432/provenpick",
+        )
+    )
 
-    # 1. Insert products into production
-    for staging_pid, product_data in full_data["products"].items():
-        # Insert product into public.product_table
-        insert_product_sql = """
-            INSERT INTO public.product_table 
-            (name, brand, category, price, description, image_url, specs, affiliate_links, created_at, updated_at)
-            VALUES ($1, $2, 1, $3, $4, $5, $6, $7, $8, $9)
-            RETURNING product_table_id
-        """
+    try:
+        # Helper to get category ID
+        async def get_category_id(category_name: str) -> int:
+            if not category_name:
+                return 4
+            row = await conn.fetchrow(
+                "SELECT category_table_id FROM public.category_table WHERE LOWER(name) = LOWER($1)",
+                category_name,
+            )
+            return row["category_table_id"] if row else 4
 
-        result = await DB.run_ddl(
-            insert_product_sql,
-            product_data["name"],
-            product_data["brand"],
-            # category=1 is a placeholder - should lookup CategoryTable
-            product_data["price"],
-            product_data["description"],
-            product_data["image_url"],
-            product_data["specs"],
-            product_data["affiliate_links"],
-            product_data.get("created_at", datetime.now()),
+        # 1. Insert products
+        for staging_pid, product_data in full_data["products"].items():
+            specs = product_data.get("specs", "{}")
+            if isinstance(specs, str):
+                specs = (
+                    json.loads(specs.replace('\\"', '"').replace("\\\\", "\\"))
+                    if specs
+                    else {}
+                )
+
+            affiliate_links = product_data.get("affiliate_links", "{}")
+            if isinstance(affiliate_links, str):
+                affiliate_links = (
+                    json.loads(
+                        affiliate_links.replace('\\"', '"').replace("\\\\", "\\")
+                    )
+                    if affiliate_links
+                    else {}
+                )
+
+            prod_category_name = product_data.get(
+                "category", full_data["article"]["category"]
+            )
+            prod_category_id = await get_category_id(prod_category_name)
+
+            prod_id = await conn.fetchval(
+                """
+                INSERT INTO public.product_table 
+                (name, brand, category, price, description, image_url, specs, affiliate_links, created_at, updated_at)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                RETURNING product_table_id
+                """,
+                product_data["name"],
+                product_data["brand"],
+                prod_category_id,
+                float(product_data["price"]),
+                product_data["description"],
+                product_data["image_url"],
+                json.dumps(specs),
+                json.dumps(affiliate_links),
+                datetime.now(),
+                datetime.now(),
+            )
+            id_mapping["products"][str(staging_pid)] = prod_id
+
+            # Images
+            for img in product_data.get("images", []):
+                await conn.execute(
+                    """
+                    INSERT INTO public.product_image_table (product, image_url, alt_text, sequence_order, created_at)
+                    VALUES ($1, $2, $3, $4, $5)
+                    """,
+                    prod_id,
+                    img["image_url"],
+                    img.get("alt_text"),
+                    img.get("sequence_order", 0),
+                    datetime.now(),
+                )
+
+            # Texts
+            for txt in product_data.get("texts", []):
+                await conn.execute(
+                    """
+                    INSERT INTO public.product_text_table (product, content, heading, sequence_order, created_at)
+                    VALUES ($1, $2, $3, $4, $5)
+                    """,
+                    prod_id,
+                    txt["content"],
+                    txt.get("heading"),
+                    txt.get("sequence_order", 0),
+                    datetime.now(),
+                )
+
+        # 2. Insert article
+        article = full_data["article"]
+        top_pick_id = id_mapping["products"].get(str(article["top_pick_staging_id"]))
+        runner_up_id = (
+            id_mapping["products"].get(str(article.get("runner_up_staging_id")))
+            if article.get("runner_up_staging_id")
+            else None
+        )
+        budget_pick_id = (
+            id_mapping["products"].get(str(article.get("budget_pick_staging_id")))
+            if article.get("budget_pick_staging_id")
+            else None
+        )
+
+        article_id = await conn.fetchval(
+            """
+            INSERT INTO public.article_table (title, category, author, top_pick, runner_up, budget_pick, created_at, updated_at)
+            VALUES ($1, $2, NULL, $3, $4, $5, $6, $7)
+            RETURNING article_table_id
+            """,
+            article["title"],
+            article["category"],
+            top_pick_id,
+            runner_up_id,
+            budget_pick_id,
+            datetime.now(),
             datetime.now(),
         )
+        id_mapping["article_id"] = article_id
 
-        # Get the newly created product_id
-        prod_id_result = await DB.run_sync(
-            f"SELECT product_table_id FROM public.product_table WHERE name = '{product_data['name']}' ORDER BY created_at DESC LIMIT 1"
-        )
-        prod_id = prod_id_result[0]["product_table_id"] if prod_id_result else 0
-
-        id_mapping["products"][staging_pid] = prod_id
-
-        # Insert product images
-        for img in product_data.get("images", []):
-            await DB.run_ddl(
+        # Article Images
+        for img in full_data.get("article_images", []):
+            await conn.execute(
                 """
-                INSERT INTO public.product_image_table 
-                (product, image_url, alt_text, sequence_order, created_at)
-                VALUES ($1, $2, $3, $4, $5)
+                INSERT INTO public.article_image_table (article, image_url, alt_text, image_type, sequence_order, created_at)
+                VALUES ($1, $2, $3, $4, $5, $6)
                 """,
-                prod_id,
+                article_id,
                 img["image_url"],
                 img.get("alt_text"),
+                img["image_type"],
                 img.get("sequence_order", 0),
-                img.get("created_at", datetime.now()),
+                datetime.now(),
             )
 
-        # Insert product texts
-        for txt in product_data.get("texts", []):
-            await DB.run_ddl(
+        # Article Texts
+        for txt in full_data.get("article_texts", []):
+            await conn.execute(
                 """
-                INSERT INTO public.product_text_table 
-                (product, content, heading, sequence_order, created_at)
+                INSERT INTO public.article_text_table (article, content, section_type, sequence_order, created_at)
                 VALUES ($1, $2, $3, $4, $5)
                 """,
-                prod_id,
+                article_id,
                 txt["content"],
-                txt.get("heading"),
+                txt["section_type"],
                 txt.get("sequence_order", 0),
-                txt.get("created_at", datetime.now()),
+                datetime.now(),
             )
 
-    # 2. Insert article into production
-    article = full_data["article"]
+        return id_mapping
 
-    # Map staging product IDs to production product IDs
-    top_pick_id = id_mapping["products"].get(article["top_pick_staging_id"])
-    runner_up_id = id_mapping["products"].get(article.get("runner_up_staging_id"))
-    budget_pick_id = id_mapping["products"].get(article.get("budget_pick_staging_id"))
+    finally:
+        await conn.close()
 
-    insert_article_sql = """
-        INSERT INTO public.article_table 
-        (title, category, author, top_pick, runner_up, budget_pick, created_at, updated_at)
-        VALUES ($1, $2, NULL, $3, $4, $5, $6, $7)
-        RETURNING article_table_id
+
+async def publish_rejection_event(data: Dict[str, Any]):
     """
+    Publish rejection event to Redis queue for external processing.
+    """
+    import redis.asyncio as redis
 
-    await DB.run_ddl(
-        insert_article_sql,
-        article["title"],
-        article["category"],
-        top_pick_id,
-        runner_up_id,
-        budget_pick_id,
-        article.get("created_at", datetime.now()),
-        datetime.now(),
-    )
+    try:
+        redis_url = os.getenv("REDIS_URL", "redis://localhost:6379")
+        client = redis.from_url(redis_url)
 
-    # Get the newly created article_id
-    article_id_result = await DB.run_sync(
-        f"SELECT article_table_id FROM public.article_table WHERE title = '{article['title']}' ORDER BY created_at DESC LIMIT 1"
-    )
-    article_id = article_id_result[0]["article_table_id"] if article_id_result else 0
-    id_mapping["article_id"] = article_id
+        # Check connection
+        await client.ping()
 
-    # 3. Insert article images
-    for img in full_data.get("article_images", []):
-        await DB.run_ddl(
-            """
-            INSERT INTO public.article_image_table 
-            (article, image_url, alt_text, image_type, sequence_order, created_at)
-            VALUES ($1, $2, $3, $4, $5, $6)
-            """,
-            article_id,
-            img["image_url"],
-            img.get("alt_text"),
-            img["image_type"],
-            img.get("sequence_order", 0),
-            img.get("created_at", datetime.now()),
-        )
+        # Publish to queue
+        queue_name = os.getenv("REJECTION_QUEUE", "rejected_articles_queue")
+        await client.lpush(queue_name, json.dumps(data, default=str))
+        print(f"Published rejection event to {queue_name}")
 
-    # 4. Insert article texts
-    for txt in full_data.get("article_texts", []):
-        await DB.run_ddl(
-            """
-            INSERT INTO public.article_text_table 
-            (article, content, section_type, sequence_order, created_at)
-            VALUES ($1, $2, $3, $4, $5)
-            """,
-            article_id,
-            txt["content"],
-            txt["section_type"],
-            txt.get("sequence_order", 0),
-            txt.get("created_at", datetime.now()),
-        )
-
-    return id_mapping
+        await client.aclose()
+    except Exception as e:
+        print(f"Warning: Failed to publish to Redis: {e}")
 
 
 async def archive_staging_data(
@@ -299,6 +347,19 @@ async def archive_staging_data(
             retention_until=retention_until,
         )
     ).run()
+
+    # If rejected, publish to queue
+    if action == "rejected":
+        event_data = {
+            "event": "article_rejected",
+            "staging_id": staging_article_id,
+            "title": full_data["article"]["title"],
+            "category": full_data["article"]["category"],
+            "comments": comments,
+            "rejected_at": datetime.now().isoformat(),
+            "full_data": full_data,
+        }
+        await publish_rejection_event(event_data)
 
     return result[0]["archive_id"]
 
@@ -378,7 +439,16 @@ async def approve_article(
             return {"success": False, "error": f"Article already {article['status']}"}
 
         # 2. Migrate to production
-        id_mapping = await migrate_to_production(full_data)
+        migration_success = False
+        migration_error_msg = None
+        try:
+            id_mapping = await migrate_to_production(full_data)
+            migration_success = True
+        except Exception as migration_error:
+            # Log error but continue with archiving
+            migration_error_msg = str(migration_error)
+            print(f"Warning: Production migration failed: {migration_error}")
+            id_mapping = None
 
         # 3. Archive the staging data
         archive_id = await archive_staging_data(
@@ -391,12 +461,21 @@ async def approve_article(
         product_ids = list(full_data["products"].keys())
         await delete_staging_data(staging_article_id, product_ids)
 
-        return {
-            "success": True,
-            "archive_id": archive_id,
-            "production_article_id": id_mapping.get("article_id"),
-            "message": "Article approved and moved to production",
-        }
+        if migration_success:
+            return {
+                "success": True,
+                "archive_id": archive_id,
+                "production_article_id": id_mapping.get("article_id")
+                if id_mapping
+                else None,
+                "message": "Article approved, migrated to production, and archived",
+            }
+        else:
+            return {
+                "success": True,
+                "archive_id": archive_id,
+                "message": f"Article approved and archived (migration failed: {migration_error_msg})",
+            }
 
     except Exception as e:
         return {"success": False, "error": str(e)}

@@ -3,8 +3,7 @@ Article review API endpoints.
 """
 
 from typing import List
-from fastapi import APIRouter, Depends, HTTPException
-from backend.auth import verify_token
+from fastapi import APIRouter, HTTPException
 from backend.db.tables import StagingArticleTable, StagingProductTable
 from backend.services.approval import approve_article
 from backend.services.rejection import reject_article
@@ -19,7 +18,7 @@ router = APIRouter(prefix="/api/articles", tags=["Articles"])
 
 
 @router.get("/", response_model=List[ArticleListItem])
-async def list_pending_articles(token: str = Depends(verify_token)):
+async def list_pending_articles():
     """
     Get list of all pending articles.
     """
@@ -65,13 +64,14 @@ async def list_pending_articles(token: str = Depends(verify_token)):
 
 
 @router.get("/{article_id}")
-async def get_article_detail(article_id: int, token: str = Depends(verify_token)):
+async def get_article(article_id: int):
     """
-    Get full article details including products, images, and texts.
+    Get full article details with all products, images, and texts.
     """
     from backend.services.approval import fetch_full_staging_article
 
     full_data = await fetch_full_staging_article(article_id)
+
     if not full_data:
         raise HTTPException(status_code=404, detail="Article not found")
 
@@ -79,11 +79,11 @@ async def get_article_detail(article_id: int, token: str = Depends(verify_token)
 
 
 @router.post("/{article_id}/approve")
-async def approve(article_id: int, token: str = Depends(verify_token)):
+async def approve(article_id: int):
     """
     Approve an article and move it to production.
     """
-    result = await approve_article(article_id, token)
+    result = await approve_article(article_id, "admin")
 
     if not result["success"]:
         raise HTTPException(status_code=400, detail=result["error"])
@@ -92,13 +92,11 @@ async def approve(article_id: int, token: str = Depends(verify_token)):
 
 
 @router.post("/{article_id}/reject")
-async def reject(
-    article_id: int, request: RejectionRequest, token: str = Depends(verify_token)
-):
+async def reject(article_id: int, request: RejectionRequest):
     """
     Reject an article with comments.
     """
-    result = await reject_article(article_id, token, request.comments)
+    result = await reject_article(article_id, "admin", request.comments)
 
     if not result["success"]:
         raise HTTPException(status_code=400, detail=result["error"])

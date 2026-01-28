@@ -120,8 +120,6 @@ class ApprovalRequest(BaseModel):
 class RejectionRequest(BaseModel):
     """Request to reject an article"""
 
-    article_id: int
-    reviewer_token: str
     comments: str
 
 

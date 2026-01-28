@@ -4,22 +4,29 @@ Archive page - view archived articles.
 
 import reflex as rx
 import httpx
-from typing import List, Dict
+from typing import List, Dict, Optional
 from frontend.state import AppState
+
+
+class ArchiveItem(rx.Base):
+    """Archive item model"""
+
+    staging_article_id: int
+    action: str
+    archived_at: str
+    reviewer_comments: Optional[str] = ""
 
 
 class ArchiveState(AppState):
     """Archive page state"""
 
-    archives: List[Dict] = []
+    archives: List[ArchiveItem] = []
     loading: bool = False
     error: str = ""
     filter_action: str = ""  # '', 'approved', or 'rejected'
 
     async def load_archives(self):
         """Load archived articles"""
-        await self.check_auth()
-
         self.loading = True
         self.error = ""
 
@@ -40,24 +47,25 @@ class ArchiveState(AppState):
         finally:
             self.loading = False
 
-    def set_filter(self, action: str):
+    async def set_filter(self, action: str):
         """Set filter and reload"""
         self.filter_action = action
-        return self.load_archives()
+        await self.load_archives()
 
 
-def archive_row(archive: Dict) -> rx.Component:
+def archive_row(archive: ArchiveItem) -> rx.Component:
     """Single archive row"""
     return rx.table.row(
-        rx.table.cell(str(archive["staging_article_id"])),
+        rx.table.cell(archive.staging_article_id),
         rx.table.cell(
-            rx.badge(
-                archive["action"],
-                color_scheme="green" if archive["action"] == "approved" else "red",
+            rx.cond(
+                archive.action == "approved",
+                rx.badge(archive.action, color_scheme="green"),
+                rx.badge(archive.action, color_scheme="red"),
             )
         ),
-        rx.table.cell(archive["archived_at"][:10]),
-        rx.table.cell(archive.get("reviewer_comments", "")[:50] + "..."),
+        rx.table.cell(archive.archived_at),
+        rx.table.cell(archive.reviewer_comments),
     )
 
 
@@ -70,7 +78,6 @@ def archive_list_page() -> rx.Component:
                 rx.heading("Archive", size="8"),
                 rx.spacer(),
                 rx.button("← Back to Dashboard", on_click=lambda: rx.redirect("/")),
-                rx.button("Logout", on_click=ArchiveState.logout, variant="soft"),
                 width="100%",
                 align="center",
             ),

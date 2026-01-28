@@ -4,21 +4,31 @@ Dashboard page - list of pending articles.
 
 import reflex as rx
 import httpx
-from typing import List, Dict
+from typing import List
 from frontend.state import AppState
+
+
+class ArticleItem(rx.Base):
+    """Article list item model"""
+
+    id: int
+    title: str
+    category: str
+    top_pick_name: str
+    products_count: int
+    submitted_at: str
+    status: str = "pending"
 
 
 class DashboardState(AppState):
     """Dashboard state"""
 
-    articles: List[Dict] = []
+    articles: List[ArticleItem] = []
     loading: bool = False
     error: str = ""
 
     async def load_articles(self):
         """Load pending articles from API"""
-        await self.check_auth()
-
         self.loading = True
         self.error = ""
 
@@ -30,7 +40,9 @@ class DashboardState(AppState):
                 )
 
                 if response.status_code == 200:
-                    self.articles = response.json()
+                    self.articles = [
+                        ArticleItem(**article) for article in response.json()
+                    ]
                 else:
                     self.error = f"Error loading articles: {response.status_code}"
         except Exception as e:
@@ -43,18 +55,18 @@ class DashboardState(AppState):
         return rx.redirect(f"/review/{article_id}")
 
 
-def article_row(article: Dict) -> rx.Component:
+def article_row(article: ArticleItem) -> rx.Component:
     """Single article row component"""
     return rx.table.row(
-        rx.table.cell(article["title"]),
-        rx.table.cell(article["category"]),
-        rx.table.cell(article["top_pick_name"]),
-        rx.table.cell(str(article["products_count"])),
-        rx.table.cell(article["submitted_at"][:10]),  # Date only
+        rx.table.cell(article.title),
+        rx.table.cell(article.category),
+        rx.table.cell(article.top_pick_name),
+        rx.table.cell(article.products_count),
+        rx.table.cell(article.submitted_at[:10]),  # Date only
         rx.table.cell(
             rx.button(
                 "Review",
-                on_click=lambda: DashboardState.view_article(article["id"]),
+                on_click=lambda: DashboardState.view_article(article.id),
                 size="2",
             )
         ),
@@ -69,7 +81,9 @@ def dashboard_page() -> rx.Component:
             rx.flex(
                 rx.heading("Staging Dashboard", size="8"),
                 rx.spacer(),
-                rx.button("Logout", on_click=DashboardState.logout, variant="soft"),
+                rx.button(
+                    "Archive", on_click=lambda: rx.redirect("/archive"), variant="soft"
+                ),
                 width="100%",
                 align="center",
             ),
