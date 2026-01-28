@@ -66,7 +66,7 @@ def archive_list_page() -> rx.Component:
     return rx.container(
         rx.vstack(
             # Header
-            rx.hbox(
+            rx.flex(
                 rx.heading("Archive", size="8"),
                 rx.spacer(),
                 rx.button("← Back to Dashboard", on_click=lambda: rx.redirect("/")),
@@ -75,7 +75,7 @@ def archive_list_page() -> rx.Component:
                 align="center",
             ),
             # Filters
-            rx.hbox(
+            rx.flex(
                 rx.button("All", on_click=lambda: ArchiveState.set_filter("")),
                 rx.button(
                     "Approved",

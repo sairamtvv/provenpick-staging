@@ -66,7 +66,7 @@ def dashboard_page() -> rx.Component:
     return rx.container(
         rx.vstack(
             # Header
-            rx.hbox(
+            rx.flex(
                 rx.heading("Staging Dashboard", size="8"),
                 rx.spacer(),
                 rx.button("Logout", on_click=DashboardState.logout, variant="soft"),

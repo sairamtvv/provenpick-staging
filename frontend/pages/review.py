@@ -91,7 +91,7 @@ def review_page() -> rx.Component:
     return rx.container(
         rx.vstack(
             # Header
-            rx.hbox(
+            rx.flex(
                 rx.button("← Back", on_click=lambda: rx.redirect("/")),
                 rx.spacer(),
                 rx.button("Logout", on_click=ReviewState.logout, variant="soft"),
@@ -109,7 +109,7 @@ def review_page() -> rx.Component:
                 rx.cond(
                     ReviewState.article.is_none(),
                     rx.text("Article not found"),
-                    rx.hbox(
+                    rx.flex(
                         # Left panel - metadata and actions
                         rx.card(
                             rx.vstack(
@@ -138,7 +138,7 @@ def review_page() -> rx.Component:
                                     width="100%",
                                 ),
                                 rx.divider(),
-                                rx.hbox(
+                                rx.flex(
                                     rx.button(
                                         "✓ Approve",
                                         on_click=lambda: ReviewState.approve_article(

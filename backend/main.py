@@ -48,20 +48,23 @@ async def root():
 async def health():
     """Detailed health check"""
     try:
-        # Test database connection using raw SQL
+        # Test database connection using raw query
         from backend.db.connection import DB
+        import asyncpg
 
-        result = await DB.run_sync(
-            "SELECT COUNT(*) as count FROM staging.staging_article WHERE status = 'pending'"
-        )
-
-        count = result[0]["count"] if result else 0
+        # Get a connection and run a simple query
+        async with DB.connection_pool.acquire() as conn:
+            result = await conn.fetchval(
+                "SELECT COUNT(*) FROM staging.staging_article WHERE status = 'pending'"
+            )
 
         return {
             "status": "healthy",
             "database": "connected",
-            "pending_articles": count,
+            "pending_articles": result,
         }
+    except Exception as e:
+        return {"status": "unhealthy", "database": "disconnected", "error": str(e)}
     except Exception as e:
         return {"status": "unhealthy", "database": "disconnected", "error": str(e)}
     except Exception as e:
