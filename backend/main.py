@@ -47,21 +47,23 @@ async def root():
 @app.get("/health")
 async def health():
     """Detailed health check"""
-    from backend.db.tables import StagingArticleTable
-
     try:
-        # Test database connection
-        count = (
-            await StagingArticleTable.count()
-            .where(StagingArticleTable.status == "pending")
-            .run()
+        # Test database connection using raw SQL
+        from backend.db.connection import DB
+
+        result = await DB.run_sync(
+            "SELECT COUNT(*) as count FROM staging.staging_article WHERE status = 'pending'"
         )
+
+        count = result[0]["count"] if result else 0
 
         return {
             "status": "healthy",
             "database": "connected",
             "pending_articles": count,
         }
+    except Exception as e:
+        return {"status": "unhealthy", "database": "disconnected", "error": str(e)}
     except Exception as e:
         return {"status": "unhealthy", "database": "disconnected", "error": str(e)}
 

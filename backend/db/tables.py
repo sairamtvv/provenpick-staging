@@ -16,7 +16,7 @@ from piccolo.columns import (
 )
 
 
-class StagingProductTable(Table, schema="staging"):
+class StagingProductTable(Table, schema="staging", tablename="staging_product"):
     """Products in staging environment"""
 
     staging_product_id = Serial(primary_key=True)
@@ -40,7 +40,7 @@ class StagingProductTable(Table, schema="staging"):
         return self.name or "Staging Product"
 
 
-class StagingArticleTable(Table, schema="staging"):
+class StagingArticleTable(Table, schema="staging", tablename="staging_article"):
     """Articles in staging awaiting review"""
 
     staging_article_id = Serial(primary_key=True)
@@ -69,7 +69,7 @@ class StagingArticleTable(Table, schema="staging"):
         return self.title or "Staging Article"
 
 
-class StagingArticleImageTable(Table, schema="staging"):
+class StagingArticleImageTable(Table, schema="staging", tablename="staging_article_image"):
     """Images for staging articles"""
 
     staging_article_image_id = Serial(primary_key=True)
@@ -84,7 +84,7 @@ class StagingArticleImageTable(Table, schema="staging"):
         return f"{self.image_type} - {self.alt_text or 'Image'}"
 
 
-class StagingArticleTextTable(Table, schema="staging"):
+class StagingArticleTextTable(Table, schema="staging", tablename="staging_article_text"):
     """Text content for staging articles"""
 
     staging_article_text_id = Serial(primary_key=True)
@@ -99,7 +99,7 @@ class StagingArticleTextTable(Table, schema="staging"):
         return f"{self.section_type} - {summary}"
 
 
-class StagingProductImageTable(Table, schema="staging"):
+class StagingProductImageTable(Table, schema="staging", tablename="staging_product_image"):
     """Images for staging products"""
 
     staging_product_image_id = Serial(primary_key=True)
@@ -113,7 +113,7 @@ class StagingProductImageTable(Table, schema="staging"):
         return f"Product Image {self.sequence_order}"
 
 
-class StagingProductTextTable(Table, schema="staging"):
+class StagingProductTextTable(Table, schema="staging", tablename="staging_product_text"):
     """Text content for staging products"""
 
     staging_product_text_id = Serial(primary_key=True)
@@ -127,7 +127,7 @@ class StagingProductTextTable(Table, schema="staging"):
         return self.heading or f"Product Text {self.sequence_order}"
 
 
-class RejectionQueueTable(Table, schema="staging"):
+class RejectionQueueTable(Table, schema="staging", tablename="rejection_queue"):
     """Queue of rejected articles for AI pipeline to reprocess"""
 
     rejection_id = Serial(primary_key=True)
@@ -143,7 +143,7 @@ class RejectionQueueTable(Table, schema="staging"):
         return f"Rejection {self.rejection_id} - {status}"
 
 
-class ArchiveTable(Table, schema="staging"):
+class ArchiveTable(Table, schema="staging", tablename="archive"):
     """Archive of approved and rejected articles"""
 
     archive_id = Serial(primary_key=True)
