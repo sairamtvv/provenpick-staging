@@ -5,12 +5,16 @@ Main FastAPI application entry point.
 import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from dotenv import load_dotenv
 
 from backend.api import articles, pipeline, archive
 
-# Load environment variables
-load_dotenv()
+# Load environment variables (dotenv is optional)
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv()
+except ImportError:
+    pass  # dotenv not installed, use system environment variables
 
 # Create FastAPI app
 app = FastAPI(

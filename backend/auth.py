@@ -5,9 +5,14 @@ Simple token-based authentication for staging system.
 import os
 from fastapi import HTTPException, Security
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from dotenv import load_dotenv
 
-load_dotenv()
+# Load environment variables (dotenv is optional)
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv()
+except ImportError:
+    pass
 
 security = HTTPBearer()
 
