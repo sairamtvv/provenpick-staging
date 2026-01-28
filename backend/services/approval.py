@@ -128,27 +128,142 @@ async def migrate_to_production(full_data: Dict[str, Any]) -> Dict[str, int]:
     Returns:
         Dictionary mapping staging IDs to production IDs
     """
-    # TODO: Implement actual migration to production tables
-    # This is a placeholder that shows the structure
+    from backend.db.connection import DB
+    from datetime import datetime
 
-    # This function would:
-    # 1. Insert products into public.product_table
-    # 2. Insert product images/texts
-    # 3. Insert article into public.article_table
-    # 4. Insert article images/texts
-    # 5. Return mapping of staging_id -> production_id
-
-    # Placeholder return
     id_mapping = {
         "products": {},  # {staging_product_id: production_product_id}
         "article_id": 0,
     }
 
-    # Example structure:
-    # for staging_pid, product_data in full_data["products"].items():
-    #     # Insert into production
-    #     prod_id = await insert_into_production_product(product_data)
-    #     id_mapping["products"][staging_pid] = prod_id
+    # Note: category handling - we'll use category name as string for now
+    # In future, should look up category_table_id
+
+    # 1. Insert products into production
+    for staging_pid, product_data in full_data["products"].items():
+        # Insert product into public.product_table
+        insert_product_sql = """
+            INSERT INTO public.product_table 
+            (name, brand, category, price, description, image_url, specs, affiliate_links, created_at, updated_at)
+            VALUES ($1, $2, 1, $3, $4, $5, $6, $7, $8, $9)
+            RETURNING product_table_id
+        """
+
+        result = await DB.run_ddl(
+            insert_product_sql,
+            product_data["name"],
+            product_data["brand"],
+            # category=1 is a placeholder - should lookup CategoryTable
+            product_data["price"],
+            product_data["description"],
+            product_data["image_url"],
+            product_data["specs"],
+            product_data["affiliate_links"],
+            product_data.get("created_at", datetime.now()),
+            datetime.now(),
+        )
+
+        # Get the newly created product_id
+        prod_id_result = await DB.run_sync(
+            f"SELECT product_table_id FROM public.product_table WHERE name = '{product_data['name']}' ORDER BY created_at DESC LIMIT 1"
+        )
+        prod_id = prod_id_result[0]["product_table_id"] if prod_id_result else 0
+
+        id_mapping["products"][staging_pid] = prod_id
+
+        # Insert product images
+        for img in product_data.get("images", []):
+            await DB.run_ddl(
+                """
+                INSERT INTO public.product_image_table 
+                (product, image_url, alt_text, sequence_order, created_at)
+                VALUES ($1, $2, $3, $4, $5)
+                """,
+                prod_id,
+                img["image_url"],
+                img.get("alt_text"),
+                img.get("sequence_order", 0),
+                img.get("created_at", datetime.now()),
+            )
+
+        # Insert product texts
+        for txt in product_data.get("texts", []):
+            await DB.run_ddl(
+                """
+                INSERT INTO public.product_text_table 
+                (product, content, heading, sequence_order, created_at)
+                VALUES ($1, $2, $3, $4, $5)
+                """,
+                prod_id,
+                txt["content"],
+                txt.get("heading"),
+                txt.get("sequence_order", 0),
+                txt.get("created_at", datetime.now()),
+            )
+
+    # 2. Insert article into production
+    article = full_data["article"]
+
+    # Map staging product IDs to production product IDs
+    top_pick_id = id_mapping["products"].get(article["top_pick_staging_id"])
+    runner_up_id = id_mapping["products"].get(article.get("runner_up_staging_id"))
+    budget_pick_id = id_mapping["products"].get(article.get("budget_pick_staging_id"))
+
+    insert_article_sql = """
+        INSERT INTO public.article_table 
+        (title, category, author, top_pick, runner_up, budget_pick, created_at, updated_at)
+        VALUES ($1, $2, NULL, $3, $4, $5, $6, $7)
+        RETURNING article_table_id
+    """
+
+    await DB.run_ddl(
+        insert_article_sql,
+        article["title"],
+        article["category"],
+        top_pick_id,
+        runner_up_id,
+        budget_pick_id,
+        article.get("created_at", datetime.now()),
+        datetime.now(),
+    )
+
+    # Get the newly created article_id
+    article_id_result = await DB.run_sync(
+        f"SELECT article_table_id FROM public.article_table WHERE title = '{article['title']}' ORDER BY created_at DESC LIMIT 1"
+    )
+    article_id = article_id_result[0]["article_table_id"] if article_id_result else 0
+    id_mapping["article_id"] = article_id
+
+    # 3. Insert article images
+    for img in full_data.get("article_images", []):
+        await DB.run_ddl(
+            """
+            INSERT INTO public.article_image_table 
+            (article, image_url, alt_text, image_type, sequence_order, created_at)
+            VALUES ($1, $2, $3, $4, $5, $6)
+            """,
+            article_id,
+            img["image_url"],
+            img.get("alt_text"),
+            img["image_type"],
+            img.get("sequence_order", 0),
+            img.get("created_at", datetime.now()),
+        )
+
+    # 4. Insert article texts
+    for txt in full_data.get("article_texts", []):
+        await DB.run_ddl(
+            """
+            INSERT INTO public.article_text_table 
+            (article, content, section_type, sequence_order, created_at)
+            VALUES ($1, $2, $3, $4, $5)
+            """,
+            article_id,
+            txt["content"],
+            txt["section_type"],
+            txt.get("sequence_order", 0),
+            txt.get("created_at", datetime.now()),
+        )
 
     return id_mapping
 
