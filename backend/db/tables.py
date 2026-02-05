@@ -45,6 +45,11 @@ class StagingArticleTable(Table, schema="staging", tablename="staging_article"):
 
     staging_article_id = Serial(primary_key=True)
 
+    # Workflow tracking (links to provenpick-workflow)
+    workflow_uuid = Varchar(
+        length=36, null=True, index=True
+    )  # UUID from workflow system
+
     # Article information (same as main ArticleTable)
     title = Varchar(length=255)
     category = Varchar(length=100)
@@ -69,7 +74,9 @@ class StagingArticleTable(Table, schema="staging", tablename="staging_article"):
         return self.title or "Staging Article"
 
 
-class StagingArticleImageTable(Table, schema="staging", tablename="staging_article_image"):
+class StagingArticleImageTable(
+    Table, schema="staging", tablename="staging_article_image"
+):
     """Images for staging articles"""
 
     staging_article_image_id = Serial(primary_key=True)
@@ -84,7 +91,9 @@ class StagingArticleImageTable(Table, schema="staging", tablename="staging_artic
         return f"{self.image_type} - {self.alt_text or 'Image'}"
 
 
-class StagingArticleTextTable(Table, schema="staging", tablename="staging_article_text"):
+class StagingArticleTextTable(
+    Table, schema="staging", tablename="staging_article_text"
+):
     """Text content for staging articles"""
 
     staging_article_text_id = Serial(primary_key=True)
@@ -99,7 +108,9 @@ class StagingArticleTextTable(Table, schema="staging", tablename="staging_articl
         return f"{self.section_type} - {summary}"
 
 
-class StagingProductImageTable(Table, schema="staging", tablename="staging_product_image"):
+class StagingProductImageTable(
+    Table, schema="staging", tablename="staging_product_image"
+):
     """Images for staging products"""
 
     staging_product_image_id = Serial(primary_key=True)
@@ -113,7 +124,9 @@ class StagingProductImageTable(Table, schema="staging", tablename="staging_produ
         return f"Product Image {self.sequence_order}"
 
 
-class StagingProductTextTable(Table, schema="staging", tablename="staging_product_text"):
+class StagingProductTextTable(
+    Table, schema="staging", tablename="staging_product_text"
+):
     """Text content for staging products"""
 
     staging_product_text_id = Serial(primary_key=True)
@@ -132,6 +145,9 @@ class RejectionQueueTable(Table, schema="staging", tablename="rejection_queue"):
 
     rejection_id = Serial(primary_key=True)
     staging_article_id = Integer()
+    workflow_uuid = Varchar(
+        length=36, null=True, index=True
+    )  # UUID from workflow system
     article_data = JSONB()  # Full article + products + all child data
     reviewer_comments = Text()
     rejected_at = Timestamp()

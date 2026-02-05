@@ -48,25 +48,18 @@ async def root():
 async def health():
     """Detailed health check"""
     try:
-        # Test database connection using raw query
-        from backend.db.connection import DB
-        import asyncpg
+        # Test database connection using Piccolo
+        from backend.db.tables import StagingArticleTable
 
-        # Get a connection and run a simple query
-        async with DB.connection_pool.acquire() as conn:
-            result = await conn.fetchval(
-                "SELECT COUNT(*) FROM staging.staging_article WHERE status = 'pending'"
-            )
+        result = await StagingArticleTable.count().where(
+            StagingArticleTable.status == "pending"
+        )
 
         return {
             "status": "healthy",
             "database": "connected",
             "pending_articles": result,
         }
-    except Exception as e:
-        return {"status": "unhealthy", "database": "disconnected", "error": str(e)}
-    except Exception as e:
-        return {"status": "unhealthy", "database": "disconnected", "error": str(e)}
     except Exception as e:
         return {"status": "unhealthy", "database": "disconnected", "error": str(e)}
 

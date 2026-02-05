@@ -57,8 +57,11 @@ class Article(rx.Base):
     category: str
     submitted_at: str
     hook_image: Optional[ArticleImage] = None
+    introduction: Optional[ArticleText] = None  # Introduction section (above mindmap)
     mindmap_image: Optional[ArticleImage] = None
     mindmap_summary: Optional[ArticleText] = None
+    full_article_html: Optional[str] = None  # Full article content
+    bullet_points: Optional[str] = None  # Bullet points summary
     methodology_texts: List[ArticleText] = []
     top_pick: Optional[Product] = None
     runner_up: Optional[Product] = None
@@ -74,10 +77,114 @@ class ReviewState(AppState):
     comments: str = ""
     action_loading: bool = False
     current_article_id: int = 0
+    hook_image_uploading: bool = False
+    uploaded_hook_image_url: str = ""
 
     def set_comments(self, value: str):
         """Set comments value"""
         self.comments = value
+
+    @rx.var
+    def get_full_article_html_dataurl(self) -> str:
+        """Return full article HTML as data URL for iframe"""
+        if self.article and self.article.full_article_html:
+            import base64
+
+            html_content = f"""
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <style>
+        body {{
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            line-height: 1.6;
+            font-size: 1.05em;
+            padding: 1em;
+            margin: 0;
+            color: #333;
+        }}
+        h1, h2, h3, h4, h5, h6 {{
+            margin-top: 1.5em;
+            margin-bottom: 0.5em;
+            font-weight: 600;
+        }}
+        table {{
+            border-collapse: collapse;
+            width: 100%;
+            margin: 1em 0;
+        }}
+        th, td {{
+            border: 1px solid #ddd;
+            padding: 8px 12px;
+            text-align: left;
+        }}
+        th {{
+            background-color: #f5f5f5;
+            font-weight: 600;
+        }}
+        p {{
+            margin: 0.8em 0;
+        }}
+    </style>
+</head>
+<body>
+{self.article.full_article_html}
+</body>
+</html>
+            """
+            # Encode as base64 data URL
+            encoded = base64.b64encode(html_content.encode("utf-8")).decode("utf-8")
+            return f"data:text/html;base64,{encoded}"
+        return ""
+
+    async def handle_hook_image_upload(self, files: list[rx.UploadFile]):
+        """Handle hook image upload"""
+        if not files:
+            return
+
+        self.hook_image_uploading = True
+
+        try:
+            file = files[0]
+            upload_data = await file.read()
+
+            # Save file to a temporary location or upload to storage
+            import base64
+            import os
+            from datetime import datetime
+
+            # Create uploads directory if it doesn't exist
+            upload_dir = "uploaded_files"
+            os.makedirs(upload_dir, exist_ok=True)
+
+            # Generate unique filename
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"hook_{self.current_article_id}_{timestamp}_{file.filename}"
+            filepath = os.path.join(upload_dir, filename)
+
+            # Save file
+            with open(filepath, "wb") as f:
+                f.write(upload_data)
+
+            # Update the article's hook image via API
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    f"{self.api_url}/api/articles/{self.current_article_id}/hook-image",
+                    headers=self.get_headers(),
+                    json={"image_url": f"/{filepath}", "alt_text": "Hook Image"},
+                )
+
+                if response.status_code == 200:
+                    self.uploaded_hook_image_url = f"/{filepath}"
+                    # Reload article to show new image
+                    await self.load_article(self.current_article_id)
+                else:
+                    self.error = f"Failed to upload image: {response.text}"
+        except Exception as e:
+            self.error = f"Upload error: {str(e)}"
+        finally:
+            self.hook_image_uploading = False
 
     async def on_load(self):
         """Load article when page mounts"""
@@ -142,6 +249,42 @@ class ReviewState(AppState):
                         None,
                     )
 
+                    # Find introduction text
+                    introduction = next(
+                        (
+                            ArticleText(**txt)
+                            for txt in article_texts
+                            if txt["section_type"] == "introduction"
+                        ),
+                        None,
+                    )
+
+                    # Find full article HTML
+                    full_article_text = next(
+                        (
+                            txt
+                            for txt in article_texts
+                            if txt["section_type"] == "full_article"
+                        ),
+                        None,
+                    )
+                    full_article_html = (
+                        full_article_text["content"] if full_article_text else None
+                    )
+
+                    # Find bullet points
+                    bullet_points_text = next(
+                        (
+                            txt
+                            for txt in article_texts
+                            if txt["section_type"] == "bullet_points"
+                        ),
+                        None,
+                    )
+                    bullet_points = (
+                        bullet_points_text["content"] if bullet_points_text else None
+                    )
+
                     # Get methodology texts
                     methodology_texts = [
                         ArticleText(**txt)
@@ -198,8 +341,11 @@ class ReviewState(AppState):
                         category=article_data["category"],
                         submitted_at=article_data["submitted_at"],
                         hook_image=hook_img,
+                        introduction=introduction,
                         mindmap_image=mindmap_img,
                         mindmap_summary=mindmap_summary,
+                        full_article_html=full_article_html,
+                        bullet_points=bullet_points,
                         methodology_texts=methodology_texts,
                         top_pick=top_pick,
                         runner_up=runner_up,
@@ -453,10 +599,79 @@ def review_page() -> rx.Component:
                         max_height="500px",
                         object_fit="cover",
                         border_radius="12px",
+                        margin_bottom="1em",
+                    ),
+                ),
+                # Hook Image Upload Section
+                rx.box(
+                    rx.heading("Hook Image", size="5", margin_bottom="0.5em"),
+                    rx.text(
+                        "Upload a hook image for this article (recommended 1200x630px)",
+                        color="#666",
+                        font_size="0.9em",
+                        margin_bottom="1em",
+                    ),
+                    rx.upload(
+                        rx.vstack(
+                            rx.button(
+                                "Select Image",
+                                color_scheme="blue",
+                                loading=ReviewState.hook_image_uploading,
+                            ),
+                            rx.text(
+                                "or drag and drop",
+                                color="#888",
+                                font_size="0.85em",
+                            ),
+                        ),
+                        id="hook_image_upload",
+                        accept={
+                            "image/png": [".png"],
+                            "image/jpeg": [".jpg", ".jpeg"],
+                            "image/webp": [".webp"],
+                        },
+                        max_files=1,
+                        border="2px dashed #ccc",
+                        border_radius="8px",
+                        padding="2em",
+                        width="100%",
+                        text_align="center",
+                    ),
+                    rx.button(
+                        "Upload Hook Image",
+                        on_click=lambda: ReviewState.handle_hook_image_upload(
+                            rx.upload_files(upload_id="hook_image_upload")
+                        ),
+                        color_scheme="green",
+                        margin_top="1em",
+                        loading=ReviewState.hook_image_uploading,
+                    ),
+                    background_color="#f9f9f9",
+                    border_radius="8px",
+                    padding="1.5em",
+                    margin_bottom="2em",
+                    border="1px solid #eee",
+                ),
+                # 2. Introduction Section (above mindmap)
+                rx.cond(
+                    ReviewState.article.introduction,
+                    rx.box(
+                        rx.heading("Introduction", size="7", margin_bottom="1em"),
+                        rx.markdown(
+                            ReviewState.article.introduction.content,
+                            font_size="1.1em",
+                            line_height="1.7",
+                            color="#333",
+                        ),
+                        width="100%",
+                        padding="1.5em",
+                        background_color="#fff",
+                        border_radius="8px",
+                        border="1px solid #eee",
                         margin_bottom="2em",
                     ),
                 ),
-                # 2. Mindmap Section
+                # 3. Mindmap Section
                 rx.heading("How We Picked", size="7", margin_bottom="1em"),
                 rx.cond(
                     ReviewState.article.mindmap_image,
@@ -481,6 +696,29 @@ def review_page() -> rx.Component:
                         background_color="#f9f9f9",
                         border_radius="8px",
                         border_left="4px solid #333",
+                    ),
+                ),
+                # Full Article Content
+                rx.cond(
+                    ReviewState.article.full_article_html,
+                    rx.vstack(
+                        rx.divider(margin_y="2em"),
+                        rx.heading("Full Article", size="7", margin_bottom="1.5em"),
+                        rx.el.iframe(
+                            src=ReviewState.get_full_article_html_dataurl,
+                            style={
+                                "width": "100%",
+                                "minHeight": "800px",
+                                "border": "none",
+                            },
+                        ),
+                        width="100%",
+                        padding="2em",
+                        background_color="#fff",
+                        border_radius="8px",
+                        border="1px solid #eee",
+                        margin_bottom="2em",
+                        align_items="start",
                     ),
                 ),
                 rx.divider(margin_y="2em"),

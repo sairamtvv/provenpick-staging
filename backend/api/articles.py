@@ -3,8 +3,14 @@ Article review API endpoints.
 """
 
 from typing import List
+from datetime import datetime
 from fastapi import APIRouter, HTTPException
-from backend.db.tables import StagingArticleTable, StagingProductTable
+from pydantic import BaseModel
+from backend.db.tables import (
+    StagingArticleTable,
+    StagingProductTable,
+    StagingArticleImageTable,
+)
 from backend.services.approval import approve_article
 from backend.services.rejection import reject_article
 from shared.models import (
@@ -15,6 +21,13 @@ from shared.models import (
 )
 
 router = APIRouter(prefix="/api/articles", tags=["Articles"])
+
+
+class HookImageRequest(BaseModel):
+    """Request model for hook image upload"""
+
+    image_url: str
+    alt_text: str = "Hook Image"
 
 
 @router.get("/", response_model=List[ArticleListItem])
@@ -102,3 +115,85 @@ async def reject(article_id: int, request: RejectionRequest):
         raise HTTPException(status_code=400, detail=result["error"])
 
     return result
+
+
+@router.post("/{article_id}/hook-image")
+async def upload_hook_image(article_id: int, request: HookImageRequest):
+    """
+    Upload or update hook image for an article.
+    """
+    # Check if article exists
+    article = (
+        await StagingArticleTable.select()
+        .where(StagingArticleTable.staging_article_id == article_id)
+        .first()
+        .run()
+    )
+
+    if not article:
+        raise HTTPException(status_code=404, detail="Article not found")
+
+    # Check if hook image already exists
+    existing_hook = (
+        await StagingArticleImageTable.select()
+        .where(StagingArticleImageTable.staging_article_id == article_id)
+        .where(StagingArticleImageTable.image_type == "hook")
+        .first()
+        .run()
+    )
+
+    if existing_hook:
+        # Update existing hook image
+        await (
+            StagingArticleImageTable.update(
+                {
+                    StagingArticleImageTable.image_url: request.image_url,
+                    StagingArticleImageTable.alt_text: request.alt_text,
+                }
+            )
+            .where(
+                StagingArticleImageTable.staging_article_image_id
+                == existing_hook["staging_article_image_id"]
+            )
+            .run()
+        )
+    else:
+        # Create new hook image
+        await StagingArticleImageTable.insert(
+            StagingArticleImageTable(
+                staging_article_id=article_id,
+                image_url=request.image_url,
+                alt_text=request.alt_text,
+                image_type="hook",
+                sequence_order=0,
+                created_at=datetime.now(),
+            )
+        ).run()
+
+    return {"success": True, "message": "Hook image updated"}
+
+
+@router.get("/by-uuid/{workflow_uuid}")
+async def get_article_by_uuid(workflow_uuid: str):
+    """
+    Get article by workflow UUID.
+
+    Used by workflow system to verify article delivery.
+    """
+    article = (
+        await StagingArticleTable.select()
+        .where(StagingArticleTable.workflow_uuid == workflow_uuid)
+        .first()
+        .run()
+    )
+
+    if not article:
+        raise HTTPException(status_code=404, detail="Article not found")
+
+    return {
+        "staging_article_id": article["staging_article_id"],
+        "workflow_uuid": article["workflow_uuid"],
+        "title": article["title"],
+        "status": article["status"],
+        "submitted_at": article["submitted_at"],
+    }

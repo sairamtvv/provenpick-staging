@@ -4,8 +4,10 @@ Handles the process of rejecting staging articles and queuing them for AI reproc
 """
 
 import os
+import json
 from datetime import datetime, timedelta
 from typing import Dict, Any, List, Optional
+import redis
 from backend.db.tables import (
     StagingArticleTable,
     RejectionQueueTable,
@@ -17,9 +19,42 @@ from backend.services.approval import (
     archive_staging_data,
 )
 
+# Redis configuration (should match workflow config)
+REDIS_HOST = os.environ.get("REDIS_HOST", "localhost")
+REDIS_PORT = int(os.environ.get("REDIS_PORT", 6379))
+REDIS_REJECTION_QUEUE = "provenpick:rejections"
+
+
+def get_redis_client():
+    """Get Redis client for queue operations"""
+    return redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
+
+
+async def push_to_redis_queue(rejection_data: Dict[str, Any]) -> bool:
+    """
+    Push rejection to Redis queue for workflow to process.
+
+    Args:
+        rejection_data: Rejection data to push
+
+    Returns:
+        True if successful
+    """
+    try:
+        client = get_redis_client()
+        client.rpush(REDIS_REJECTION_QUEUE, json.dumps(rejection_data, default=str))
+        client.close()
+        return True
+    except Exception as e:
+        print(f"Failed to push to Redis: {e}")
+        return False
+
 
 async def add_to_rejection_queue(
-    staging_article_id: int, full_data: Dict[str, Any], comments: str
+    staging_article_id: int,
+    full_data: Dict[str, Any],
+    comments: str,
+    workflow_uuid: Optional[str] = None,
 ) -> int:
     """
     Add rejected article to queue for AI pipeline.
@@ -28,6 +63,7 @@ async def add_to_rejection_queue(
         staging_article_id: ID of the staging article
         full_data: Complete staging data
         comments: Reviewer's comments
+        workflow_uuid: Optional workflow UUID for tracking
 
     Returns:
         Rejection queue ID
@@ -35,6 +71,7 @@ async def add_to_rejection_queue(
     result = await RejectionQueueTable.insert(
         RejectionQueueTable(
             staging_article_id=staging_article_id,
+            workflow_uuid=workflow_uuid,
             article_data=full_data,
             reviewer_comments=comments,
             rejected_at=datetime.now(),
@@ -76,14 +113,29 @@ async def reject_article(
         if article["status"] != "pending":
             return {"success": False, "error": f"Article already {article['status']}"}
 
+        # Get workflow_uuid if present
+        workflow_uuid = article.get("workflow_uuid")
+
         # 2. Add to rejection queue
         rejection_id = await add_to_rejection_queue(
             staging_article_id=staging_article_id,
             full_data=full_data,
             comments=comments,
+            workflow_uuid=workflow_uuid,
         )
 
-        # 3. Archive the staging data
+        # 3. Push to Redis queue for workflow to process
+        redis_data = {
+            "rejection_id": rejection_id,
+            "staging_article_id": staging_article_id,
+            "workflow_uuid": workflow_uuid,
+            "comments": comments,
+            "rejected_at": datetime.now().isoformat(),
+            "rejected_by": reviewer_token,
+        }
+        await push_to_redis_queue(redis_data)
+
+        # 4. Archive the staging data
         archive_id = await archive_staging_data(
             staging_article_id=staging_article_id,
             full_data=full_data,
@@ -91,7 +143,7 @@ async def reject_article(
             comments=comments,
         )
 
-        # 4. Delete from staging
+        # 5. Delete from staging
         product_ids = list(full_data["products"].keys())
         await delete_staging_data(staging_article_id, product_ids)
 
