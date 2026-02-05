@@ -158,8 +158,12 @@ async def insert_article_to_staging(article_data: Dict[str, Any]) -> Optional[in
                 await mindmap_image.save()
                 logger.info(f"Stored mindmap image for article {article_id}")
 
-        # Insert products
+        # Insert products and track pick IDs
+        top_pick_id = None
+        runner_up_id = None
+        budget_pick_id = None
         first_product_id = None
+
         for i, product in enumerate(products):
             # Build description from available info
             description = (
@@ -168,6 +172,15 @@ async def insert_article_to_staging(article_data: Dict[str, Any]) -> Optional[in
                 or product.get("target_persona")
                 or "General purpose"
             )
+
+            # Store pick_type and pick_label in specs
+            specs = product.get("specs", {})
+            if not isinstance(specs, dict):
+                specs = {}
+            specs["pick_type"] = product.get("pick_type", "")
+            specs["pick_label"] = product.get("pick_label", "")
+            specs["target_persona"] = product.get("target_persona", "")
+            specs["best_for"] = product.get("best_for", "")
 
             staging_product = StagingProductTable(
                 staging_article_id=article_id,
@@ -179,7 +192,7 @@ async def insert_article_to_staging(article_data: Dict[str, Any]) -> Optional[in
                 image_url=product.get("image_urls", [""])[0]
                 if product.get("image_urls")
                 else "",
-                specs=product.get("specs", {}),
+                specs=specs,
                 affiliate_links=product.get("affiliate_links", {}),
                 created_at=datetime.now(),
             )
@@ -193,16 +206,54 @@ async def insert_article_to_staging(article_data: Dict[str, Any]) -> Optional[in
                 .first()
             )
 
-            if saved_product and i == 0:
-                first_product_id = saved_product["staging_product_id"]
+            if saved_product:
+                product_id = saved_product["staging_product_id"]
+                pick_type = product.get("pick_type", "")
 
-            logger.info(f"Created product: {product.get('name')}")
+                # Track first product as fallback top_pick
+                if i == 0:
+                    first_product_id = product_id
 
-        # Update article with top pick
-        if first_product_id:
-            await StagingArticleTable.update(
-                {StagingArticleTable.top_pick_staging_id: first_product_id}
-            ).where(StagingArticleTable.staging_article_id == article_id)
+                # Assign pick IDs based on pick_type
+                if pick_type == "top_pick" and top_pick_id is None:
+                    top_pick_id = product_id
+                    logger.info(f"Top pick: {product.get('name')} (ID: {product_id})")
+                elif pick_type == "value_pick" and runner_up_id is None:
+                    runner_up_id = product_id
+                    logger.info(
+                        f"Runner up (value_pick): {product.get('name')} (ID: {product_id})"
+                    )
+                elif pick_type == "budget_pick" and budget_pick_id is None:
+                    budget_pick_id = product_id
+                    logger.info(
+                        f"Budget pick: {product.get('name')} (ID: {product_id})"
+                    )
+
+            logger.info(
+                f"Created product: {product.get('name')} (pick_type: {product.get('pick_type', 'none')})"
+            )
+
+        # Use first product as fallback for top_pick if none assigned
+        if top_pick_id is None and first_product_id is not None:
+            top_pick_id = first_product_id
+            logger.info(f"Using first product as top_pick fallback: {top_pick_id}")
+
+        # Update article with all pick IDs
+        update_data = {}
+        if top_pick_id:
+            update_data[StagingArticleTable.top_pick_staging_id] = top_pick_id
+        if runner_up_id:
+            update_data[StagingArticleTable.runner_up_staging_id] = runner_up_id
+        if budget_pick_id:
+            update_data[StagingArticleTable.budget_pick_staging_id] = budget_pick_id
+
+        if update_data:
+            await StagingArticleTable.update(update_data).where(
+                StagingArticleTable.staging_article_id == article_id
+            )
+            logger.info(
+                f"Updated article {article_id} with picks: top={top_pick_id}, runner_up={runner_up_id}, budget={budget_pick_id}"
+            )
 
         return article_id
 
