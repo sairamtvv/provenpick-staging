@@ -55,44 +55,48 @@ async def fetch_full_staging_article(
     if not article:
         return None
 
-    # Fetch products
-    product_ids = [article["top_pick_staging_id"]]
-    if article["runner_up_staging_id"]:
-        product_ids.append(article["runner_up_staging_id"])
-    if article["budget_pick_staging_id"]:
-        product_ids.append(article["budget_pick_staging_id"])
+    # Fetch ALL products linked to this article (not just top_pick/runner_up/budget_pick)
+    all_products = (
+        await StagingProductTable.select()
+        .where(StagingProductTable.staging_article_id == staging_article_id)
+        .run()
+    )
 
     products = {}
-    for pid in product_ids:
-        product = (
-            await StagingProductTable.select()
-            .where(StagingProductTable.staging_product_id == pid)
-            .first()
+    for product in all_products:
+        pid = product["staging_product_id"]
+
+        # Fetch product images
+        product_images = (
+            await StagingProductImageTable.select()
+            .where(StagingProductImageTable.staging_product_id == pid)
+            .order_by(StagingProductImageTable.sequence_order)
             .run()
         )
 
-        if product:
-            # Fetch product images
-            product_images = (
-                await StagingProductImageTable.select()
-                .where(StagingProductImageTable.staging_product_id == pid)
-                .order_by(StagingProductImageTable.sequence_order)
-                .run()
-            )
+        # Fetch product texts
+        product_texts = (
+            await StagingProductTextTable.select()
+            .where(StagingProductTextTable.staging_product_id == pid)
+            .order_by(StagingProductTextTable.sequence_order)
+            .run()
+        )
 
-            # Fetch product texts
-            product_texts = (
-                await StagingProductTextTable.select()
-                .where(StagingProductTextTable.staging_product_id == pid)
-                .order_by(StagingProductTextTable.sequence_order)
-                .run()
-            )
+        # If no images in StagingProductImageTable but image_url exists, use it
+        if not product_images and product.get("image_url"):
+            product_images = [
+                {
+                    "image_url": product["image_url"],
+                    "alt_text": product.get("name", "Product image"),
+                    "sequence_order": 0,
+                }
+            ]
 
-            products[pid] = {
-                **product,
-                "images": product_images,
-                "texts": product_texts,
-            }
+        products[pid] = {
+            **product,
+            "images": product_images,
+            "texts": product_texts,
+        }
 
     # Fetch article images
     article_images = (
