@@ -58,12 +58,16 @@ async def insert_article_to_staging(article_data: Dict[str, Any]) -> Optional[in
         content = article_data.get("content", {})
         sources = article_data.get("sources", [])
 
+        # Use the catchy title from workflow, fallback to placeholder
+        title = article_data.get("title") or f"Review: Category {l3_category_id}"
+
         logger.info(f"Inserting article {article_uuid} with {len(products)} products")
+        logger.info(f"Article title: {title}")
 
         # Create the staging article
         article = StagingArticleTable(
             workflow_uuid=article_uuid,
-            title=f"Review: Category {l3_category_id}",  # Will be updated during review
+            title=title,  # Use catchy title from workflow
             category=str(l3_category_id),
             status="pending",
             submitted_at=datetime.now(),
@@ -122,6 +126,19 @@ async def insert_article_to_staging(article_data: Dict[str, Any]) -> Optional[in
                     created_at=datetime.now(),
                 )
                 await mindmap_text.save()
+
+            # Introduction section (displayed above mindmap)
+            introduction = content.get("introduction", "")
+            if introduction:
+                intro_text = StagingArticleTextTable(
+                    staging_article_id=article_id,
+                    content=introduction,
+                    section_type="introduction",
+                    sequence_order=3,
+                    created_at=datetime.now(),
+                )
+                await intro_text.save()
+                logger.info(f"Stored introduction for article {article_id}")
 
             logger.info(f"Created article text sections for article {article_id}")
 
